@@ -1,4 +1,3 @@
-
 import os
 import requests
 from datetime import datetime
@@ -25,7 +24,7 @@ def fetch_price():
     }
     response = requests.get(url, params=params)
     data = response.json()
-    if "data" not in data or not data["data"]:
+    if not data.get("data"):
         return None, None
     latest = data["data"][-1]
     return latest["close"], latest["date"]
@@ -39,15 +38,13 @@ def fetch_dividend():
     }
     response = requests.get(url, params=params)
     data = response.json()
-    if "data" not in data or not data["data"]:
-        return 0
-    total_cash = sum([d["cash_dividend"] for d in data["data"] if d["cash_dividend"]])
+    total_cash = sum(d.get("cash_dividend", 0) for d in data.get("data", []) if d.get("cash_dividend"))
     return total_cash
 
 def build_report():
     close_price, date = fetch_price()
     if not close_price:
-        return "查詢失敗或資料尚未更新"
+        return "查詢股價失敗或資料尚未更新"
 
     holding_days = (datetime.strptime(date, "%Y-%m-%d") - datetime.strptime(BUY_DATE, "%Y-%m-%d")).days
     price_diff = close_price - BUY_PRICE
@@ -59,19 +56,20 @@ def build_report():
     return_with_dividend_pct = (total_with_dividend / (BUY_PRICE * SHARES)) * 100
 
     msg = f"""
-台股每日回報（{date}）
+📅 報告日期：{date}
 
-元大台灣價值高息（00940）
+元大台灣價值高息（{STOCK_ID}）
 - 入手日：{BUY_DATE}（持有 {holding_days} 天）
 - 入手價：{BUY_PRICE:.2f} 元
 - 現價：{close_price:.2f} 元
 
-不含股利損益：{profit:+,.0f} 元（{return_pct:+.2f}%）
-含股利損益：{total_with_dividend:+,.0f} 元（{return_with_dividend_pct:+.2f}%）
+不含股息報酬：{profit:+,.0f} 元（{return_pct:+.2f}%）
+含息總報酬：{total_with_dividend:+,.0f} 元（{return_with_dividend_pct:+.2f}%）
 
 持股數量：{SHARES:,} 股
-"""
-    return msg.strip()
+""".strip()
+
+    return msg
 
 def send_report():
     message = build_report()
@@ -82,18 +80,14 @@ def send_report():
     }
     requests.post(url, data=payload)
 
-@app.route("/", methods=["GET"], strict_slashes=False)
+@app.route("/", methods=["GET"])
 def index():
-    return "🐷 Telegram 股市回報機器人運行中"
+    return "🤖 Telegram 股市回報機器人運行中"
 
 @app.route("/run", methods=["GET", "POST"])
 def run():
     try:
         send_report()
-        return "報告發送完成"
+        return "報告已送出"
     except Exception as e:
-        return f"錯誤：{str(e)}"
-
-# 不要手動啟動 app.run()
-# 交由 Render 自動透過 Gunicorn / WSGI 啟動 app
-app = Flask(__name__)
+        return f"發送失敗：{str(e)}"
