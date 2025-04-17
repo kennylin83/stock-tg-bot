@@ -25,7 +25,7 @@ def fetch_price():
     }
     response = requests.get(url, params=params)
     data = response.json()
-    if not data["data"]:
+    if "data" not in data or not data["data"]:
         return None, None
     latest = data["data"][-1]
     return latest["close"], latest["date"]
@@ -39,6 +39,8 @@ def fetch_dividend():
     }
     response = requests.get(url, params=params)
     data = response.json()
+    if "data" not in data or not data["data"]:
+        return 0
     total_cash = sum([d["cash_dividend"] for d in data["data"] if d["cash_dividend"]])
     return total_cash
 
