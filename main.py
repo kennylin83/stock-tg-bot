@@ -1,5 +1,4 @@
 
-# main.py
 import os
 import requests
 from datetime import datetime
@@ -7,18 +6,15 @@ from flask import Flask, request
 
 app = Flask(__name__)
 
-# === Telegram Bot 設定 ===
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-
-# === FinMind API 設定 ===
 FINMIND_TOKEN = os.environ.get("FINMIND_API_TOKEN")
+
 STOCK_ID = "00940"
 BUY_DATE = "2024-03-29"
 BUY_PRICE = 10.0
 SHARES = 10000
 
-# === 每日回報主邏輯 ===
 def fetch_price():
     url = "https://api.finmindtrade.com/api/v4/data"
     params = {
@@ -86,12 +82,15 @@ def send_report():
 
 @app.route("/")
 def index():
-    return "Telegram 股市回報機器人運行中"
+    return "🐷 Telegram 股市回報機器人運行中"
 
-@app.route("/run", methods=["POST"])
+@app.route("/run", methods=["GET", "POST"])
 def run():
-    send_report()
-    return "報告發送完成"
+    try:
+        send_report()
+        return "報告發送完成"
+    except Exception as e:
+        return f"發送失敗：{e}"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
