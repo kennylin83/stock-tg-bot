@@ -80,7 +80,7 @@ def send_report():
     }
     requests.post(url, data=payload)
 
-@app.route("/")
+@app.route("/", methods=["GET"])
 def index():
     return "🐷 Telegram 股市回報機器人運行中"
 
@@ -90,7 +90,7 @@ def run():
         send_report()
         return "報告發送完成"
     except Exception as e:
-        return f"發送失敗：{e}"
+        return f"錯誤：{str(e)}"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
