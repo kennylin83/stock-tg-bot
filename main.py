@@ -94,5 +94,6 @@ def run():
     except Exception as e:
         return f"錯誤：{str(e)}"
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+# 不要手動啟動 app.run()
+# 交由 Render 自動透過 Gunicorn / WSGI 啟動 app
+app = Flask(__name__)
