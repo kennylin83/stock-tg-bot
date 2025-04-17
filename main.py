@@ -82,7 +82,7 @@ def send_report():
     }
     requests.post(url, data=payload)
 
-@app.route("/", methods=["GET"])
+@app.route("/", methods=["GET"], strict_slashes=False)
 def index():
     return "🐷 Telegram 股市回報機器人運行中"
 
