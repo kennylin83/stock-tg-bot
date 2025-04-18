@@ -1,3 +1,5 @@
 python-telegram-bot==13.14
 requests
 python-dotenv
+Flask
+gunicorn
