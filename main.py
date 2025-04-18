@@ -1,93 +1,109 @@
 import os
+import sqlite3
 import requests
-from datetime import datetime
-from flask import Flask, request
+from datetime import datetime, date
+from telegram import Update
+from telegram.ext import Updater, CommandHandler, CallbackContext
+from dotenv import load_dotenv
 
-app = Flask(__name__)
+# 載入環境變數
+load_dotenv()
+TELE_TOKEN = os.getenv('TELEGRAM_TOKEN')
+FINMIND_TOKEN = os.getenv('FINMIND_API_TOKEN')
 
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-FINMIND_TOKEN = os.environ.get("FINMIND_API_TOKEN")
+# 建立 SQLite 資料庫
+conn = sqlite3.connect('stocks.db', check_same_thread=False)
+c = conn.cursor()
+c.execute('''
+    CREATE TABLE IF NOT EXISTS holdings (
+        chat_id INTEGER,
+        symbol TEXT,
+        price REAL,
+        date TEXT
+    )
+''')
+conn.commit()
 
-STOCK_ID = "00940"
-BUY_DATE = "2024-03-29"
-BUY_PRICE = 10.0
-SHARES = 10000
-
-def fetch_price():
-    url = "https://api.finmindtrade.com/api/v4/data"
+# FinMind 查詢函式
+def fetch_price(symbol: str, date_str: str = None):
+    query_date = date_str or date.today().strftime('%Y-%m-%d')
+    url = 'https://api.finmindtrade.com/api/v4/data'
     params = {
-        "dataset": "TaiwanStockPrice",
-        "data_id": STOCK_ID,
-        "start_date": BUY_DATE,
-        "token": FINMIND_TOKEN
+        'dataset': 'TaiwanStockPrice',
+        'data_id': symbol,
+        'start_date': query_date,
+        'end_date': query_date,
+        'token': FINMIND_TOKEN
     }
-    response = requests.get(url, params=params)
-    data = response.json()
-    if not data.get("data"):
-        return None, None
-    latest = data["data"][-1]
-    return latest["close"], latest["date"]
+    r = requests.get(url, params=params)
+    data = r.json().get('data', [])
+    return float(data[-1]['close']) if data else None
 
-def fetch_dividend():
-    url = "https://api.finmindtrade.com/api/v4/data"
+def fetch_dividends(symbol: str, after: str):
+    url = 'https://api.finmindtrade.com/api/v4/data'
     params = {
-        "dataset": "TaiwanStockDividend",
-        "data_id": STOCK_ID,
-        "token": FINMIND_TOKEN
+        'dataset': 'TaiwanStockDividend',
+        'data_id': symbol,
+        'token': FINMIND_TOKEN
     }
-    response = requests.get(url, params=params)
-    data = response.json()
-    total_cash = sum(d.get("cash_dividend", 0) for d in data.get("data", []) if d.get("cash_dividend"))
-    return total_cash
+    r = requests.get(url, params=params)
+    total_div = 0.0
+    for d in r.json().get('data', []):
+        if d['record_date'] >= after:
+            total_div += float(d.get('dividend', 0))
+    return total_div
 
-def build_report():
-    close_price, date = fetch_price()
-    if not close_price:
-        return "查詢股價失敗或資料尚未更新"
-
-    holding_days = (datetime.strptime(date, "%Y-%m-%d") - datetime.strptime(BUY_DATE, "%Y-%m-%d")).days
-    price_diff = close_price - BUY_PRICE
-    profit = price_diff * SHARES
-    return_pct = (price_diff / BUY_PRICE) * 100
-
-    total_dividend = fetch_dividend() * SHARES
-    total_with_dividend = profit + total_dividend
-    return_with_dividend_pct = (total_with_dividend / (BUY_PRICE * SHARES)) * 100
-
-    msg = f"""
-📅 報告日期：{date}
-
-元大台灣價值高息（{STOCK_ID}）
-- 入手日：{BUY_DATE}（持有 {holding_days} 天）
-- 入手價：{BUY_PRICE:.2f} 元
-- 現價：{close_price:.2f} 元
-
-不含股息報酬：{profit:+,.0f} 元（{return_pct:+.2f}%）
-含息總報酬：{total_with_dividend:+,.0f} 元（{return_with_dividend_pct:+.2f}%）
-
-持股數量：{SHARES:,} 股
-""".strip()
-
-    return msg
-
-def send_report():
-    message = build_report()
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message
-    }
-    requests.post(url, data=payload)
-
-@app.route("/", methods=["GET"])
-def index():
-    return "🤖 Telegram 股市回報機器人運行中"
-
-@app.route("/run", methods=["GET", "POST"])
-def run():
+# /add 指令：新增持股
+def add_stock(update: Update, context: CallbackContext):
+    chat_id = update.effective_chat.id
     try:
-        send_report()
-        return "報告已送出"
-    except Exception as e:
-        return f"發送失敗：{str(e)}"
+        symbol, price, date_str = context.args
+        price = float(price)
+        datetime.strptime(date_str, '%Y-%m-%d')
+    except Exception:
+        update.message.reply_text('格式：/add 股票代號 價格(數字) 買入日期(YYYY-MM-DD)')
+        return
+
+    c.execute('INSERT INTO holdings VALUES (?, ?, ?, ?)',
+              (chat_id, symbol.upper(), price, date_str))
+    conn.commit()
+    update.message.reply_text(f'已新增：{symbol.upper()} 買入價 {price}，日期 {date_str}')
+
+# /portfolio 指令：顯示當前持股狀況
+def show_portfolio(update: Update, context: CallbackContext):
+    chat_id = update.effective_chat.id
+    rows = c.execute('SELECT symbol, price, date FROM holdings WHERE chat_id=?', (chat_id,)).fetchall()
+    if not rows:
+        update.message.reply_text('目前無持股資料，使用 /add 新增。')
+        return
+
+    msg = []
+    total_pnl = 0.0
+    total_cost = 0.0
+    for sym, cost, buy_date in rows:
+        current = fetch_price(sym)
+        divs = fetch_dividends(sym, buy_date)
+        pnl = (current - cost) + divs
+        total_pnl += pnl
+        total_cost += cost
+        msg.append(f"{sym}: 今收 {current}，含息損益 {pnl:.2f} (不含息 {current - cost:.2f})")
+
+    total_pct = total_pnl / total_cost * 100 if total_cost else 0
+    msg.append(f"\n總損益：{total_pnl:.2f} (約 {total_pct:.2f}% )")
+    update.message.reply_text("\n".join(msg))
+
+# 主程式
+def main():
+    updater = Updater(TELE_TOKEN)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler('add', add_stock))
+    dp.add_handler(CommandHandler('portfolio', show_portfolio))
+    dp.add_handler(CommandHandler('start', lambda u, c: u.message.reply_text(
+        '歡迎使用投資組合查詢機器人！\n使用 /add 和 /portfolio 指令')))
+
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == '__main__':
+    main()
